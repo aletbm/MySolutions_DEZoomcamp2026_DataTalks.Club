@@ -1,1 +1,1 @@
-# MySolutions_DEZoomcamp2026_DataTalks.Club-
+# MySolutions_DEZoomcamp2026_DataTalks.Club
