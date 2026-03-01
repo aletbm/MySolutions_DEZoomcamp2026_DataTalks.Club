@@ -2,7 +2,7 @@
 # - Keep this intentionally minimal.
 # - Pin versions for reproducibility.
 # Docs: https://getbruin.com/docs/bruin/assets/python
-#
+
 numpy<2
 pandas
 pyarrow<15

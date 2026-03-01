@@ -31,5 +31,3 @@ columns:
     type: string
     checks:
       - name: not_null
-
-#bruin run my-pipeline/pipeline/assets/ingestion/payment_lookup.asset.yml --config-file "./my-pipeline/.bruin.yml" --start-date 2022-01-01 --end-date   2022-02-01 --workers 1

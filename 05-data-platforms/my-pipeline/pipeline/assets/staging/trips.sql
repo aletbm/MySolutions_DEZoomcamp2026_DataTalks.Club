@@ -5,25 +5,19 @@
 # - Quality checks (built-ins): https://getbruin.com/docs/bruin/quality/available_checks
 # - Custom checks: https://getbruin.com/docs/bruin/quality/custom
 
-# staging.trips is a cleaned/normalized version of the raw taxi trips data.
 name: staging.trips
-# this asset is defined as plain SQL executed on DuckDB
 type: duckdb.sql
 
 depends:
-  - ingestion.trips   # raw data pulled from external source
-  - ingestion.payment_lookup  # lookup table for payment types
+  - ingestion.trips
+  - ingestion.payment_lookup
 
-# incremental strategy run monthly using the pickup timestamp
-# note: DuckDB only accepts 'date' or 'timestamp' here; we treat each
-# run's start/end dates as month boundaries so data rolls up monthly.
 materialization:
   type: table
   strategy: time_interval
-  incremental_key: tpep_pickup_datetime   # use pickup as the partition key
-  time_granularity: date                 # monthly intervals controlled by run window
+  incremental_key: pickup_datetime
+  time_granularity: date
 
-# define columns in the staging layer so quality checks and lineage are explicit
 columns:
   - name: vendor_id
     type: integer
@@ -31,47 +25,47 @@ columns:
     nullable: false
     checks:
       - name: not_null
-  - name: tpep_pickup_datetime
+  - name: pickup_datetime
     type: timestamp
-    description: pickup time (used as the incremental key)
+    description: Pickup time (used as the incremental key)
     primary_key: true
     nullable: false
     checks:
       - name: not_null
-  - name: tpep_dropoff_datetime
+  - name: dropoff_datetime
     type: timestamp
-    description: dropoff time
+    description: Dropoff time
     checks:
       - name: not_null
   - name: passenger_count
     type: integer
-    description: number of passengers
+    description: Number of passengers
     checks:
       - name: not_null
       - name: non_negative
   - name: trip_distance
     type: float
-    description: trip distance in miles
+    description: Trip distance in miles
     checks:
       - name: non_negative
   - name: ratecode_id
     type: integer
-    description: rate code identifier
+    description: Rate code identifier
   - name: store_and_fwd_flag
     type: string
-    description: flag indicating whether the trip record was held in vehicle memory before sending to the vendor
+    description: Flag indicating whether the trip record was held in vehicle memory before sending to the vendor
   - name: pu_location_id
     type: integer
-    description: pickup location zone ID
+    description: Pickup location zone ID
   - name: do_location_id
     type: integer
-    description: dropoff location zone ID
+    description: Dropoff location zone ID
   - name: payment_type
     type: integer
-    description: payment type code
+    description: Payment type code
   - name: payment_type_name
     type: string
-    description: lookup value from payment_lookup table
+    description: Lookup value from payment_lookup table
     checks:
       - name: not_null
   - name: fare_amount
@@ -100,23 +94,16 @@ columns:
     type: float
   - name: airport_fee
     type: float
-  - name: taxi_type
-    type: string
-    description: color/type of taxi
-  - name: extracted_at
-    type: timestamp
-    description: ingestion timestamp
-  - name: lpep_pickup_datetime
-    type: timestamp
-    description: location pickup (for green taxis)
-  - name: lpep_dropoff_datetime
-    type: timestamp
-    description: location dropoff (for green taxis)
   - name: trip_type
     type: integer
-    description: green taxi trip type indicator
+    description: Trip type indicator (Green taxis only; null for Yellow)
+  - name: taxi_type
+    type: string
+    description: Color/type of taxi (yellow or green)
+  - name: extracted_at
+    type: timestamp
+    description: Ingestion timestamp
 
-# a simple invariant: we should always have at least one row in the staging table
 custom_checks:
   - name: row_count_positive
     description: Ensure the table is not empty
@@ -125,18 +112,36 @@ custom_checks:
 
 @bruin */
 
--- staging query applies normalization, deduplication, and joins
--- filter by the same window used by the time_interval materialization
 WITH base AS (
     SELECT
-        t.*,
-        pl.payment_type_name
+        t.vendor_id,
+        t.pickup_datetime,
+        t.dropoff_datetime,
+        t.passenger_count,
+        t.trip_distance,
+        t.ratecode_id,
+        t.store_and_fwd_flag,
+        t.pu_location_id,
+        t.do_location_id,
+        t.payment_type,
+        pl.payment_type_name,
+        t.fare_amount,
+        t.extra,
+        t.mta_tax,
+        t.tip_amount,
+        t.tolls_amount,
+        t.improvement_surcharge,
+        t.total_amount,
+        t.congestion_surcharge,
+        t.airport_fee,
+        t.trip_type,
+        t.taxi_type,
+        t.extracted_at
     FROM ingestion.trips AS t
     LEFT JOIN ingestion.payment_lookup AS pl
         ON t.payment_type = pl.payment_type_id
-    WHERE t.tpep_pickup_datetime >= '{{ start_datetime }}'
-      AND t.tpep_pickup_datetime < '{{ end_datetime }}'
-      -- filter out obvious bad data according to our quality rules
+    WHERE t.pickup_datetime >= '{{ start_datetime }}'
+      AND t.pickup_datetime < '{{ end_datetime }}'
       AND t.passenger_count IS NOT NULL
       AND t.passenger_count >= 0
       AND t.fare_amount >= 0
@@ -144,7 +149,6 @@ WITH base AS (
       AND t.tolls_amount >= 0
       AND t.total_amount >= 0
 ),
--- drop duplicates based on all trip fields (ignore extracted_at since it varies)
 dedup AS (
     SELECT *
     FROM (
@@ -152,8 +156,8 @@ dedup AS (
                ROW_NUMBER() OVER (
                    PARTITION BY
                        vendor_id,
-                       tpep_pickup_datetime,
-                       tpep_dropoff_datetime,
+                       pickup_datetime,
+                       dropoff_datetime,
                        passenger_count,
                        trip_distance,
                        ratecode_id,
@@ -170,18 +174,37 @@ dedup AS (
                        total_amount,
                        congestion_surcharge,
                        airport_fee,
-                       taxi_type,
-                       lpep_pickup_datetime,
-                       lpep_dropoff_datetime,
-                       trip_type
-                   ORDER BY 1
+                       trip_type,
+                       taxi_type
+                   ORDER BY extracted_at DESC
                ) AS rn
         FROM base
     )
     WHERE rn = 1
 )
 
-SELECT *
-FROM dedup;
-
--- bruin run my-pipeline/pipeline/assets/staging/trips.sql --config-file "./my-pipeline/.bruin.yml" --start-date 2022-01-01 --end-date   2022-02-01 --workers 1
+SELECT
+    vendor_id,
+    pickup_datetime,
+    dropoff_datetime,
+    passenger_count,
+    trip_distance,
+    ratecode_id,
+    store_and_fwd_flag,
+    pu_location_id,
+    do_location_id,
+    payment_type,
+    payment_type_name,
+    fare_amount,
+    extra,
+    mta_tax,
+    tip_amount,
+    tolls_amount,
+    improvement_surcharge,
+    total_amount,
+    congestion_surcharge,
+    airport_fee,
+    trip_type,
+    taxi_type,
+    extracted_at
+FROM dedup
