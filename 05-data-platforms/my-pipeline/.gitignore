@@ -1,8 +1,4 @@
-.python-version
-uv.lock
-pyproject.toml
-data
-.venv
+.bruin.yml
 logs/runs
 logs/*.log
 __pycache__/

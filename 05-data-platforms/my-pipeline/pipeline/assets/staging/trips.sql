@@ -1,16 +1,11 @@
 /* @bruin
 
-# Docs:
-# - Materialization: https://getbruin.com/docs/bruin/assets/materialization
-# - Quality checks (built-ins): https://getbruin.com/docs/bruin/quality/available_checks
-# - Custom checks: https://getbruin.com/docs/bruin/quality/custom
-
-name: staging.trips
-type: duckdb.sql
+name: ny_taxi.staging_trips
+type: bq.sql
 
 depends:
-  - ingestion.trips
-  - ingestion.payment_lookup
+  - ny_taxi.ingestion_trips
+  - ny_taxi.ingestion_payment_lookup
 
 materialization:
   type: table
@@ -107,7 +102,7 @@ columns:
 custom_checks:
   - name: row_count_positive
     description: Ensure the table is not empty
-    query: SELECT COUNT(*) > 0 FROM staging.trips
+    query: SELECT COUNT(*) > 0 FROM {{ var.staging_dataset }}.staging_trips
     value: 1
 
 @bruin */
@@ -136,9 +131,20 @@ WITH base AS (
         t.airport_fee,
         t.trip_type,
         t.taxi_type,
-        t.extracted_at
-    FROM ingestion.trips AS t
-    LEFT JOIN ingestion.payment_lookup AS pl
+        t.extracted_at,
+        -- string versions of float columns for BigQuery PARTITION BY compatibility
+        CAST(t.trip_distance AS STRING)        AS trip_distance_str,
+        CAST(t.fare_amount AS STRING)          AS fare_amount_str,
+        CAST(t.extra AS STRING)                AS extra_str,
+        CAST(t.mta_tax AS STRING)              AS mta_tax_str,
+        CAST(t.tip_amount AS STRING)           AS tip_amount_str,
+        CAST(t.tolls_amount AS STRING)         AS tolls_amount_str,
+        CAST(t.improvement_surcharge AS STRING) AS improvement_surcharge_str,
+        CAST(t.total_amount AS STRING)         AS total_amount_str,
+        CAST(t.congestion_surcharge AS STRING) AS congestion_surcharge_str,
+        CAST(t.airport_fee AS STRING)          AS airport_fee_str
+    FROM {{ var.ingestion_dataset }}.ingestion_trips AS t
+    LEFT JOIN {{ var.ingestion_dataset }}.ingestion_payment_lookup AS pl
         ON t.payment_type = pl.payment_type_id
     WHERE t.pickup_datetime >= '{{ start_datetime }}'
       AND t.pickup_datetime < '{{ end_datetime }}'
@@ -159,21 +165,21 @@ dedup AS (
                        pickup_datetime,
                        dropoff_datetime,
                        passenger_count,
-                       trip_distance,
+                       trip_distance_str,
                        ratecode_id,
                        store_and_fwd_flag,
                        pu_location_id,
                        do_location_id,
                        payment_type,
-                       fare_amount,
-                       extra,
-                       mta_tax,
-                       tip_amount,
-                       tolls_amount,
-                       improvement_surcharge,
-                       total_amount,
-                       congestion_surcharge,
-                       airport_fee,
+                       fare_amount_str,
+                       extra_str,
+                       mta_tax_str,
+                       tip_amount_str,
+                       tolls_amount_str,
+                       improvement_surcharge_str,
+                       total_amount_str,
+                       congestion_surcharge_str,
+                       airport_fee_str,
                        trip_type,
                        taxi_type
                    ORDER BY extracted_at DESC

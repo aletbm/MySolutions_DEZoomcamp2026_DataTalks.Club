@@ -1,12 +1,13 @@
 """@bruin
 
-name: ingestion.trips
+name: ny_taxi.ingestion_trips
 
 type: python
 
 image: python:3.11
 
-connection: duckdb-default
+connection: bigquery-default
+destination_table: ${BQ_PROJECT}.${BQ_DATASET}.ingestion_trips
 
 materialization:
   type: table
@@ -116,6 +117,49 @@ from io import BytesIO
 import pandas as pd
 import requests
 
+# column mappings per taxi type
+YELLOW_COLUMNS = {
+    "tpep_pickup_datetime": "pickup_datetime",
+    "tpep_dropoff_datetime": "dropoff_datetime",
+    "VendorID": "vendor_id",
+    "RatecodeID": "ratecode_id",
+    "PULocationID": "pu_location_id",
+    "DOLocationID": "do_location_id",
+    "passenger_count": "passenger_count",
+    "trip_distance": "trip_distance",
+    "payment_type": "payment_type",
+    "fare_amount": "fare_amount",
+    "extra": "extra",
+    "mta_tax": "mta_tax",
+    "tip_amount": "tip_amount",
+    "tolls_amount": "tolls_amount",
+    "improvement_surcharge": "improvement_surcharge",
+    "total_amount": "total_amount",
+    "congestion_surcharge": "congestion_surcharge",
+    "airport_fee": "airport_fee",
+}
+
+GREEN_COLUMNS = {
+    "lpep_pickup_datetime": "pickup_datetime",
+    "lpep_dropoff_datetime": "dropoff_datetime",
+    "VendorID": "vendor_id",
+    "RatecodeID": "ratecode_id",
+    "PULocationID": "pu_location_id",
+    "DOLocationID": "do_location_id",
+    "passenger_count": "passenger_count",
+    "trip_distance": "trip_distance",
+    "payment_type": "payment_type",
+    "fare_amount": "fare_amount",
+    "extra": "extra",
+    "mta_tax": "mta_tax",
+    "tip_amount": "tip_amount",
+    "tolls_amount": "tolls_amount",
+    "improvement_surcharge": "improvement_surcharge",
+    "total_amount": "total_amount",
+    "congestion_surcharge": "congestion_surcharge",
+    "trip_type": "trip_type",
+}
+
 def materialize():
     start_date = os.environ["BRUIN_START_DATE"]
     end_date = os.environ["BRUIN_END_DATE"]
@@ -134,70 +178,35 @@ def materialize():
         month = cur.month
         for taxi in taxi_types:
             url = (
-                "https://d37ci6vzurychx.cloudfront.net/trip-data/"
-                f"{taxi}_tripdata_{year}-{month:02}.parquet"
+                "https://github.com/DataTalksClub/nyc-tlc-data/releases/download/"
+                f"{taxi}/{taxi}_tripdata_{year}-{month:02}.csv.gz"
             )
-            resp = requests.get(url, timeout=60)
+            resp = requests.get(url, timeout=120, allow_redirects=True)
             resp.raise_for_status()
-            df = pd.read_parquet(BytesIO(resp.content), engine="pyarrow")
+
+            df = pd.read_csv(
+                BytesIO(resp.content),
+                compression="gzip",
+                low_memory=False,
+            )
 
             df["taxi_type"] = taxi
 
             if taxi == "yellow":
-                df.rename(
-                    columns={
-                        "tpep_pickup_datetime": "pickup_datetime",
-                        "tpep_dropoff_datetime": "dropoff_datetime",
-                        "VendorID": "vendor_id",
-                        "RatecodeID": "ratecode_id",
-                        "PULocationID": "pu_location_id",
-                        "DOLocationID": "do_location_id",
-                        "passenger_count": "passenger_count",
-                        "trip_distance": "trip_distance",
-                        "payment_type": "payment_type",
-                        "fare_amount": "fare_amount",
-                        "extra": "extra",
-                        "mta_tax": "mta_tax",
-                        "tip_amount": "tip_amount",
-                        "tolls_amount": "tolls_amount",
-                        "improvement_surcharge": "improvement_surcharge",
-                        "total_amount": "total_amount",
-                        "congestion_surcharge": "congestion_surcharge",
-                        "airport_fee": "airport_fee",
-                    },
-                    inplace=True,
-                )
+                df.rename(columns=YELLOW_COLUMNS, inplace=True)
                 if "trip_type" not in df.columns:
                     df["trip_type"] = None
+
             elif taxi == "green":
-                df.rename(
-                    columns={
-                        "lpep_pickup_datetime": "pickup_datetime",
-                        "lpep_dropoff_datetime": "dropoff_datetime",
-                        "VendorID": "vendor_id",
-                        "RatecodeID": "ratecode_id",
-                        "PULocationID": "pu_location_id",
-                        "DOLocationID": "do_location_id",
-                        "passenger_count": "passenger_count",
-                        "trip_distance": "trip_distance",
-                        "payment_type": "payment_type",
-                        "fare_amount": "fare_amount",
-                        "extra": "extra",
-                        "mta_tax": "mta_tax",
-                        "tip_amount": "tip_amount",
-                        "tolls_amount": "tolls_amount",
-                        "improvement_surcharge": "improvement_surcharge",
-                        "total_amount": "total_amount",
-                        "congestion_surcharge": "congestion_surcharge",
-                        "trip_type": "trip_type",
-                    },
-                    inplace=True,
-                )
+                df.rename(columns=GREEN_COLUMNS, inplace=True)
                 if "airport_fee" not in df.columns:
-                  if "ehail_fee" in df.columns:
-                      df.rename(columns={"ehail_fee": "airport_fee"}, inplace=True)
-                  else:
-                      df["airport_fee"] = None
+                    if "ehail_fee" in df.columns:
+                        df.rename(columns={"ehail_fee": "airport_fee"}, inplace=True)
+                    else:
+                        df["airport_fee"] = None
+
+            if "cbd_congestion_fee" not in df.columns:
+                df["cbd_congestion_fee"] = None
 
             dfs.append(df)
         cur += relativedelta(months=1)
@@ -205,7 +214,20 @@ def materialize():
     if dfs:
         out = pd.concat(dfs, ignore_index=True)
         out["extracted_at"] = datetime.utcnow()
+
+        # enforce explicit types for BigQuery compatibility
+        # Int64 (capital I) supports nullable integers, required for BigQuery
+        out["vendor_id"] = out["vendor_id"].astype("Int64")
+        out["passenger_count"] = out["passenger_count"].astype("Int64")
+        out["ratecode_id"] = out["ratecode_id"].astype("Int64")
+        out["pu_location_id"] = out["pu_location_id"].astype("Int64")
+        out["do_location_id"] = out["do_location_id"].astype("Int64")
+        out["payment_type"] = out["payment_type"].astype("Int64")
+        out["trip_type"] = out["trip_type"].astype("Int64")
+        out["pickup_datetime"] = pd.to_datetime(out["pickup_datetime"])
+        out["dropoff_datetime"] = pd.to_datetime(out["dropoff_datetime"])
+        out["extracted_at"] = pd.to_datetime(out["extracted_at"])
     else:
         out = pd.DataFrame()
-    return out
 
+    return out

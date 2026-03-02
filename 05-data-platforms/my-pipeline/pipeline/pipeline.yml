@@ -5,7 +5,8 @@ schedule: monthly
 start_date: "2019-01-01"
 
 default_connections:
-  duckdb: duckdb-default
+  google_cloud_platform: bigquery-default
+  #duckdb: duckdb-default
 
 variables:
   taxi_types:
@@ -13,3 +14,15 @@ variables:
     items:
       type: string
     default: ["yellow", "green"]
+
+  ingestion_dataset:
+    type: string
+    default: "ny_taxi"
+
+  staging_dataset:
+    type: string
+    default: "ny_taxi"
+
+  reports_dataset:
+    type: string
+    default: "ny_taxi"
