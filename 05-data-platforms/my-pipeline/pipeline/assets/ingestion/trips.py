@@ -108,7 +108,6 @@ columns:
     type: timestamp
     description: Timestamp when the record was extracted.
 
-owner: @aletbm
 @bruin"""
 
 import os
