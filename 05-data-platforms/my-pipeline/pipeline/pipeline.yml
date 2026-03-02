@@ -1,4 +1,4 @@
-name: ny_taxi
+name: nyc_taxi_pipeline
 
 schedule: monthly
 
