@@ -9,6 +9,8 @@ image: python:3.11
 connection: bigquery-default
 destination_table: ${BQ_PROJECT}.${BQ_DATASET}.ingestion_trips
 
+instance: b1.large
+
 materialization:
   type: table
   strategy: append
