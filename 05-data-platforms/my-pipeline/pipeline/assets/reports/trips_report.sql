@@ -2,6 +2,7 @@
 
 name: ny_taxi.trips_report
 type: bq.sql
+connection: bigquery-default
 
 depends:
   - ny_taxi.staging_trips
